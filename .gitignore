@@ -1,0 +1,7 @@
+# object files
+
+*.o
+forkserver
+httpserver
+poolserver
+threadserver
