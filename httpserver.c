@@ -42,12 +42,32 @@ void serve_file(int fd, char *path) {
   stat(path, &file_stats);
   /* PART 2 BEGIN */
 
+  char length_str[32];
+  snprintf(length_str, sizeof(length_str), "%ld", file_stats.st_size);
+
   http_start_response(fd, 200);
   http_send_header(fd, "Content-Type", http_get_mime_type(path));
   http_send_header(fd, "Content-Length",
-                   (char *)file_stats->st_size); // TODO: change this line too
+                   length_str); // TODO: change this line too
   http_end_headers(fd);
 
+  int file_fd = open(path, O_RDONLY);
+  if (file_fd < 0) {
+    perror("Failed to open file");
+    return;
+  }
+
+  char buffer[4096];
+  ssize_t bytes_read;
+
+  while ((bytes_read = read(file_fd, buffer, sizeof(buffer))) > 0) {
+    ssize_t bytes_written = write(fd, buffer, bytes_read);
+    if (bytes_written < 0) {
+      perror("Failed to write to socket");
+      break;
+    }
+  }
+  close(file_fd);
   /* PART 2 END */
 }
 
@@ -61,14 +81,27 @@ void serve_directory(int fd, char *path) {
 
   // TODO: Open the directory (Hint: opendir() may be useful here)
   DIR *dir = opendir(path);
-  struct dirent *dir_entry;
+  if (!dir) {
+    perror("failed to open directory");
+    return;
+  }
 
   /**
-   * TODO: For each entry in the directory (Hint: look at the usage of readdir()
+   * TODO: For each entry in the directory (Hint: look at the usage of
+   * readdir()
    * ), send a string containing a properly formatted HTML. (Hint: the
    * http_format_href() function in libhttp.c may be useful here)
    */
-  dir_entry = readdir(dir);
+  struct dirent *dir_entry;
+  while (dir_entry = readdir(dir)) {
+
+    char html_link_buffer[1024];
+    http_format_href(html_link_buffer, path,
+                     dir_entry->d_name); // Allocate enough space
+    write(fd, html_link_buffer,
+          strlen(html_link_buffer)); // Write the formatted HTML link
+  }
+  closedir(dir);
 
   /* PART 3 END */
 }
@@ -80,9 +113,9 @@ void serve_directory(int fd, char *path) {
  *   1) If user requested an existing file, respond with the file
  *   2) If user requested a directory and index.html exists in the directory,
  *      send the index.html file.
- *   3) If user requested a directory and index.html doesn't exist, send a list
- *      of files in the directory with links to each.
- *   4) Send a 404 Not Found response.
+ *   3) If user requested a directory and index.html doesn't exist, send a
+ * list of files in the directory with links to each. 4) Send a 404 Not Found
+ * response.
  *
  *   Closes the client socket (fd) when finished.
  */
@@ -234,8 +267,8 @@ void handle_proxy_request(int fd) {
  */
 void *handle_clients(void *void_request_handler) {
   void (*request_handler)(int) = (void (*)(int))void_request_handler;
-  /* (Valgrind) Detach so thread frees its memory on completion, since we won't
-   * be joining on it. */
+  /* (Valgrind) Detach so thread frees its memory on completion, since we
+   * won't be joining on it. */
   pthread_detach(pthread_self());
 
   /* TODO: PART 7 */
