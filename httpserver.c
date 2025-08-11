@@ -201,6 +201,43 @@ void handle_files_request(int fd) {
  *
  *   Closes client socket (fd) and proxy target fd (target_fd) when finished.
  */
+
+void *forward_client_to_server(void *args) {
+  int client_fd = ((struct proxy_args *)args)->client_fd;
+  int server_fd = ((struct proxy_args *)args)->server_fd;
+
+  char buffer[4096];
+  ssize_t bytes_read;
+
+  while ((bytes_read = read(client_fd, buffer, sizeof(buffer))) > 0) {
+    ssize_t bytes_written = write(server_fd, buffer, bytes_read);
+    if (bytes_written < 0) {
+      perror("Failed to write to proxy target");
+      break;
+    }
+  }
+  shutdown(client_fd, SHUT_WR);
+  return NULL;
+}
+
+void *forward_server_to_client(void *args) {
+  int client_fd = ((struct proxy_args *)args)->client_fd;
+  int server_fd = ((struct proxy_args *)args)->server_fd;
+
+  char buffer[4096];
+  ssize_t bytes_read;
+
+  while ((bytes_read = read(server_fd, buffer, sizeof(buffer))) > 0) {
+    ssize_t bytes_written = write(client_fd, buffer, bytes_read);
+    if (bytes_written < 0) {
+      perror("Failed to write to client");
+      break;
+    }
+  }
+  shutdown(server_fd, SHUT_WR);
+  return NULL;
+}
+
 void handle_proxy_request(int fd) {
 
   /*
@@ -253,9 +290,30 @@ void handle_proxy_request(int fd) {
   }
 
   /* TODO: PART 4 */
-  /* PART 4 BEGIN */
 
-  /* PART 4 END */
+  /* PART 4 BEGIN */
+  struct proxy_args *args = malloc(sizeof(struct proxy_args));
+  if (!args) {
+    perror("Failed to allocate memory for proxy_args");
+    exit(1);
+  }
+
+  args->client_fd = fd;
+  args->server_fd = target_fd;
+
+  pthread_t client_to_server_thread, server_to_client_thread;
+
+  pthread_create(&client_to_server_thread, NULL, forward_client_to_server,
+                 args);
+  pthread_create(&server_to_client_thread, NULL, forward_server_to_client,
+                 args);
+
+  pthread_join(client_to_server_thread, NULL);
+  pthread_join(server_to_client_thread, NULL);
+
+  close(target_fd);
+  close(fd);
+  free(args);
 }
 
 #ifdef POOLSERVER
@@ -272,6 +330,7 @@ void *handle_clients(void *void_request_handler) {
   pthread_detach(pthread_self());
 
   /* TODO: PART 7 */
+
   /* PART 7 BEGIN */
 
   /* PART 7 END */
