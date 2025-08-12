@@ -1,3 +1,5 @@
+#include "libhttp.h"
+#include "wq.h"
 #include <arpa/inet.h>
 #include <dirent.h>
 #include <errno.h>
@@ -12,10 +14,8 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
-
-#include "libhttp.h"
-#include "wq.h"
 
 /*
  * Global configuration variables.
@@ -29,6 +29,35 @@ int server_port; // Default value: 8000
 char *server_files_directory;
 char *server_proxy_hostname;
 int server_proxy_port;
+
+void handle_sigchld(int signum) {
+  // The loop continues as long as waitpid successfully reaps a child.
+  // A return value > 0 means a child was reaped.
+  while (waitpid(-1, NULL, WNOHANG) > 0) {
+    // Do nothing inside the loop. The work is done by the condition.
+  }
+}
+
+void *request_handler_wrapper(void *arg) {
+  // Cast the void* argument back to our struct type
+  thread_args_t *args = (thread_args_t *)arg;
+
+  // Unpack the arguments from the struct
+  void (*handler_func)(int) = args->request_handler;
+  int client_fd = args->client_socket_fd;
+
+  // The struct is no longer needed, so we free it
+  free(args);
+
+  // Detach the thread so its resources are automatically cleaned up
+  pthread_detach(pthread_self());
+
+  // Call the actual handler and then close the connection
+  handler_func(client_fd);
+  close(client_fd);
+
+  return NULL;
+}
 
 /*
  * Serves the contents the file stored at `path` to the client socket `fd`.
@@ -329,11 +358,13 @@ void *handle_clients(void *void_request_handler) {
    * won't be joining on it. */
   pthread_detach(pthread_self());
 
-  /* TODO: PART 7 */
-
   /* PART 7 BEGIN */
-
+  while (1) {
+    int client_socket_fd = wq_pop(&work_queue);
+    request_handler(client_socket_fd);
+  }
   /* PART 7 END */
+  return NULL;
 }
 
 /*
@@ -342,7 +373,13 @@ void *handle_clients(void *void_request_handler) {
 void init_thread_pool(int num_threads, void (*request_handler)(int)) {
 
   /* TODO: PART 7 */
-  /* PART 7 BEGIN */
+  wq_init(&work_queue);
+  pthread_t worker[num_threads + 1];
+
+  for (int i = 0; i <= num_threads; i++) {
+    pthread_create(&worker[i], NULL, handle_clients, (void *)request_handler);
+    /* PART 7 BEGIN */
+  }
 
   /* PART 7 END */
 }
@@ -379,6 +416,7 @@ void serve_forever(int *socket_number, void (*request_handler)(int)) {
   server_address.sin_addr.s_addr = INADDR_ANY;
   server_address.sin_port = htons(server_port);
 
+  signal(SIGCHLD, handle_sigchld);
   /*
    * TODO: PART 1
    *
@@ -442,6 +480,20 @@ void serve_forever(int *socket_number, void (*request_handler)(int)) {
      */
 
     /* PART 5 BEGIN */
+    pid_t pid = fork();
+
+    if (pid > 0) {
+      close(client_socket_number);
+
+    } else if (pid == 0) {
+      close(*socket_number);
+      request_handler(client_socket_number);
+      close(client_socket_number);
+      exit(0);
+    } else {
+      perror("Failed to fork");
+      close(client_socket_number);
+    }
 
     /* PART 5 END */
 
@@ -458,6 +510,18 @@ void serve_forever(int *socket_number, void (*request_handler)(int)) {
 
     /* PART 6 BEGIN */
 
+    thread_args_t *args = malloc(sizeof(thread_args_t));
+    if (args == NULL) { /* handle malloc error */
+    }
+
+    args->request_handler = request_handler;
+    args->client_socket_fd = client_socket_number;
+
+    pthread_t new_con_thread;
+    pthread_create(&new_con_thread, NULL, request_handler_wrapper, args);
+
+    pthread_detach(new_con_thread);
+
     /* PART 6 END */
 #elif POOLSERVER
     /*
@@ -469,6 +533,7 @@ void serve_forever(int *socket_number, void (*request_handler)(int)) {
      */
 
     /* PART 7 BEGIN */
+    wq_push(&work_queue, client_socket_number);
 
     /* PART 7 END */
 #endif

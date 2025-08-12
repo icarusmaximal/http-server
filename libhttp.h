@@ -33,6 +33,11 @@ struct proxy_args {
   int server_fd;
 };
 
+typedef struct thread_args {
+  void (*request_handler)(int);
+  int client_socket_fd;
+} thread_args_t;
+
 struct http_request *http_request_parse(int fd);
 
 /*
